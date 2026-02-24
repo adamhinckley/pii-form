@@ -1,3 +1,10 @@
+import type {
+  DateOfBirth,
+  DriversLicense,
+  PhoneNumber,
+  SSN,
+} from "../lib/schema";
+
 export interface Address {
   street: string;
   city: string;
@@ -8,16 +15,16 @@ export interface Address {
 export interface IdentityFormData {
   fullName: string;
   address: Address;
-  ssn: string;           // format: XXX-XX-XXXX
-  phoneNumber: string;   // format: XXX-XXX-XXXX
-  dob: string;           // format: YYYY-MM-DD
-  driversLicense: string;
+  ssn: SSN; // format: XXX-XX-XXXX
+  phoneNumber: PhoneNumber; // format: XXX-XXX-XXXX
+  dob: DateOfBirth; // format: YYYY-MM-DD
+  driversLicense: DriversLicense;
 }
 
 export interface IdentityRecord extends IdentityFormData {
   id: string;
   submittedAt: string;
-  status: 'pending' | 'verified' | 'failed';
+  status: "pending" | "verified" | "failed";
 }
 
 export interface ApiSuccess<T> {
