@@ -1,7 +1,8 @@
 import { useRef } from "react";
-import { useForm } from "@tanstack/react-form";
+import { Controller, useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { identitySchema, type IdentityFormValues } from "../lib/schema";
-import { sanitize, sanitizeInput, formatPhone } from "../lib/sanitize";
+import { sanitizeInput, formatPhone } from "../lib/sanitize";
 import { useSubmitIdentity } from "../lib/useSubmitIdentity";
 import { ApiRequestError } from "../api/piiForm";
 import { FormField } from "../ui/FormField";
@@ -19,12 +20,6 @@ const errored =
 
 function inputClass(hasError: boolean) {
   return hasError ? errored : base;
-}
-
-// Runs the same fn on both blur and submit so validation fires at both times.
-function fieldValidate<T>(fn: (v: T) => string | undefined) {
-  const handler = ({ value }: { value: T }) => fn(value);
-  return { onBlur: handler, onSubmit: handler };
 }
 
 const DEFAULTS: IdentityFormValues = {
@@ -48,26 +43,37 @@ export function IdentityForm() {
     first?.focus();
   }
 
-  const form = useForm({
+  const {
+    control,
+    reset,
+    handleSubmit,
+    formState: { errors, isSubmitting: isFormSubmitting },
+  } = useForm<IdentityFormValues>({
+    resolver: zodResolver(identitySchema),
     defaultValues: DEFAULTS,
-    onSubmitInvalid: () => {
-      focusFirstError();
-    },
-    onSubmit: async ({ value }) => {
-      // Final Zod guard — defence-in-depth even if a field validator is bypassed
-      const parsed = identitySchema.safeParse(value);
-      if (!parsed.success) return;
-
-      const { consent: _consent, ...payload } = parsed.data;
-      void _consent;
-
-      try {
-        await mutation.mutateAsync(payload);
-      } catch {
-        // Error surfaced via mutation.error in render
-      }
-    },
+    mode: "onBlur",
+    reValidateMode: "onBlur",
+    shouldFocusError: true,
   });
+
+  const onValidSubmit = async (value: IdentityFormValues) => {
+    // Final Zod guard — defence-in-depth even if a field validator is bypassed
+    const parsed = identitySchema.safeParse(value);
+    if (!parsed.success) return;
+
+    const { consent: _consent, ...payload } = parsed.data;
+    void _consent;
+
+    try {
+      await mutation.mutateAsync(payload);
+    } catch {
+      // Error surfaced via mutation.error in render
+    }
+  };
+
+  const onInvalidSubmit = () => {
+    focusFirstError();
+  };
 
   if (mutation.isSuccess && mutation.data) {
     return (
@@ -75,7 +81,7 @@ export function IdentityForm() {
         record={mutation.data.data}
         onReset={() => {
           mutation.reset();
-          form.reset();
+          reset(DEFAULTS);
         }}
       />
     );
@@ -94,7 +100,7 @@ export function IdentityForm() {
           (mutation.error.error.errors ?? []).map((e) => [e.field, e.message]),
         )
       : {};
-  const isSubmitting = mutation.isPending;
+  const isSubmitting = isFormSubmitting || mutation.isPending;
 
   return (
     <div className="mx-auto max-w-2xl rounded-xl border border-gray-200 bg-white p-8 shadow-sm">
@@ -139,20 +145,17 @@ export function IdentityForm() {
         className="space-y-6"
         onSubmit={(e) => {
           e.preventDefault();
-          form.handleSubmit();
+          void handleSubmit(onValidSubmit, onInvalidSubmit)(e);
         }}
       >
         {/* Full Name */}
-        <form.Field
+        <Controller
           name="fullName"
-          validators={fieldValidate<string>((value) => {
-            const r = identitySchema.shape.fullName.safeParse(sanitize(value));
-            return r.success ? undefined : r.error.issues[0].message;
-          })}
-        >
-          {(field) => {
+          control={control}
+          render={({ field }) => {
             const err =
-              field.state.meta.errors[0] ?? apiFieldErrors["fullName"];
+              (errors.fullName?.message as string | undefined) ??
+              apiFieldErrors["fullName"];
             return (
               <FormField label="Full Name" id="fullName" required error={err}>
                 <input
@@ -163,18 +166,18 @@ export function IdentityForm() {
                   aria-required="true"
                   aria-invalid={!!err}
                   aria-describedby={err ? "fullName-error" : undefined}
-                  value={field.state.value}
+                  value={field.value}
                   onChange={(e) =>
-                    field.handleChange(sanitizeInput(e.target.value))
+                    field.onChange(sanitizeInput(e.target.value))
                   }
-                  onBlur={field.handleBlur}
+                  onBlur={field.onBlur}
                   disabled={isSubmitting}
                   className={inputClass(!!err)}
                 />
               </FormField>
             );
           }}
-        </form.Field>
+        />
 
         {/* Address */}
         <fieldset className="space-y-4">
@@ -185,18 +188,13 @@ export function IdentityForm() {
             </span>
           </legend>
 
-          <form.Field
+          <Controller
             name="address.street"
-            validators={fieldValidate<string>((value) => {
-              const r = identitySchema.shape.address.shape.street.safeParse(
-                sanitize(value).trim(),
-              );
-              return r.success ? undefined : r.error.issues[0].message;
-            })}
-          >
-            {(field) => {
+            control={control}
+            render={({ field }) => {
               const err =
-                field.state.meta.errors[0] ?? apiFieldErrors["address.street"];
+                (errors.address?.street?.message as string | undefined) ??
+                apiFieldErrors["address.street"];
               return (
                 <FormField label="Street" id="street" required error={err}>
                   <input
@@ -207,33 +205,27 @@ export function IdentityForm() {
                     aria-required="true"
                     aria-invalid={!!err}
                     aria-describedby={err ? "street-error" : undefined}
-                    value={field.state.value}
+                    value={field.value}
                     onChange={(e) =>
-                      field.handleChange(sanitizeInput(e.target.value))
+                      field.onChange(sanitizeInput(e.target.value))
                     }
-                    onBlur={field.handleBlur}
+                    onBlur={field.onBlur}
                     disabled={isSubmitting}
                     className={inputClass(!!err)}
                   />
                 </FormField>
               );
             }}
-          </form.Field>
+          />
 
           <div className="grid grid-cols-6 gap-3">
             <div className="col-span-3">
-              <form.Field
+              <Controller
                 name="address.city"
-                validators={fieldValidate<string>((value) => {
-                  const r = identitySchema.shape.address.shape.city.safeParse(
-                    sanitize(value).trim(),
-                  );
-                  return r.success ? undefined : r.error.issues[0].message;
-                })}
-              >
-                {(field) => {
+                control={control}
+                render={({ field }) => {
                   const err =
-                    field.state.meta.errors[0] ??
+                    (errors.address?.city?.message as string | undefined) ??
                     apiFieldErrors["address.city"];
                   return (
                     <FormField label="City" id="city" required error={err}>
@@ -245,33 +237,27 @@ export function IdentityForm() {
                         aria-required="true"
                         aria-invalid={!!err}
                         aria-describedby={err ? "city-error" : undefined}
-                        value={field.state.value}
+                        value={field.value}
                         onChange={(e) =>
-                          field.handleChange(sanitizeInput(e.target.value))
+                          field.onChange(sanitizeInput(e.target.value))
                         }
-                        onBlur={field.handleBlur}
+                        onBlur={field.onBlur}
                         disabled={isSubmitting}
                         className={inputClass(!!err)}
                       />
                     </FormField>
                   );
                 }}
-              </form.Field>
+              />
             </div>
 
             <div className="col-span-1">
-              <form.Field
+              <Controller
                 name="address.state"
-                validators={fieldValidate<string>((value) => {
-                  const r = identitySchema.shape.address.shape.state.safeParse(
-                    sanitize(value).trim(),
-                  );
-                  return r.success ? undefined : r.error.issues[0].message;
-                })}
-              >
-                {(field) => {
+                control={control}
+                render={({ field }) => {
                   const err =
-                    field.state.meta.errors[0] ??
+                    (errors.address?.state?.message as string | undefined) ??
                     apiFieldErrors["address.state"];
                   return (
                     <FormField label="State" id="state" required error={err}>
@@ -284,35 +270,30 @@ export function IdentityForm() {
                         aria-required="true"
                         aria-invalid={!!err}
                         aria-describedby={err ? "state-error" : undefined}
-                        value={field.state.value}
+                        value={field.value}
                         onChange={(e) =>
-                          field.handleChange(
+                          field.onChange(
                             sanitizeInput(e.target.value.toUpperCase()),
                           )
                         }
-                        onBlur={field.handleBlur}
+                        onBlur={field.onBlur}
                         disabled={isSubmitting}
                         className={inputClass(!!err)}
                       />
                     </FormField>
                   );
                 }}
-              </form.Field>
+              />
             </div>
 
             <div className="col-span-2">
-              <form.Field
+              <Controller
                 name="address.zip"
-                validators={fieldValidate<string>((value) => {
-                  const r = identitySchema.shape.address.shape.zip.safeParse(
-                    sanitize(value).trim(),
-                  );
-                  return r.success ? undefined : r.error.issues[0].message;
-                })}
-              >
-                {(field) => {
+                control={control}
+                render={({ field }) => {
                   const err =
-                    field.state.meta.errors[0] ?? apiFieldErrors["address.zip"];
+                    (errors.address?.zip?.message as string | undefined) ??
+                    apiFieldErrors["address.zip"];
                   return (
                     <FormField label="ZIP Code" id="zip" required error={err}>
                       <input
@@ -325,33 +306,31 @@ export function IdentityForm() {
                         aria-required="true"
                         aria-invalid={!!err}
                         aria-describedby={err ? "zip-error" : undefined}
-                        value={field.state.value}
+                        value={field.value}
                         onChange={(e) =>
-                          field.handleChange(sanitizeInput(e.target.value))
+                          field.onChange(sanitizeInput(e.target.value))
                         }
-                        onBlur={field.handleBlur}
+                        onBlur={field.onBlur}
                         disabled={isSubmitting}
                         className={inputClass(!!err)}
                       />
                     </FormField>
                   );
                 }}
-              </form.Field>
+              />
             </div>
           </div>
         </fieldset>
 
         {/* SSN + Phone */}
         <div className="grid grid-cols-2 gap-4">
-          <form.Field
+          <Controller
             name="ssn"
-            validators={fieldValidate<string>((value) => {
-              const r = identitySchema.shape.ssn.safeParse(value);
-              return r.success ? undefined : r.error.issues[0].message;
-            })}
-          >
-            {(field) => {
-              const err = field.state.meta.errors[0] ?? apiFieldErrors["ssn"];
+            control={control}
+            render={({ field }) => {
+              const err =
+                (errors.ssn?.message as string | undefined) ??
+                apiFieldErrors["ssn"];
               return (
                 <FormField
                   label="Social Security Number"
@@ -362,9 +341,9 @@ export function IdentityForm() {
                 >
                   <SSNInput
                     id="ssn"
-                    value={field.state.value}
-                    onChange={(v) => field.handleChange(v)}
-                    onBlur={field.handleBlur}
+                    value={field.value}
+                    onChange={(v) => field.onChange(v)}
+                    onBlur={field.onBlur}
                     disabled={isSubmitting}
                     hasError={!!err}
                     ariaDescribedBy={err ? "ssn-error" : "ssn-hint"}
@@ -372,18 +351,15 @@ export function IdentityForm() {
                 </FormField>
               );
             }}
-          </form.Field>
+          />
 
-          <form.Field
+          <Controller
             name="phoneNumber"
-            validators={fieldValidate<string>((value) => {
-              const r = identitySchema.shape.phoneNumber.safeParse(value);
-              return r.success ? undefined : r.error.issues[0].message;
-            })}
-          >
-            {(field) => {
+            control={control}
+            render={({ field }) => {
               const err =
-                field.state.meta.errors[0] ?? apiFieldErrors["phoneNumber"];
+                (errors.phoneNumber?.message as string | undefined) ??
+                apiFieldErrors["phoneNumber"];
               return (
                 <FormField
                   label="Phone Number"
@@ -404,31 +380,29 @@ export function IdentityForm() {
                     aria-describedby={
                       err ? "phoneNumber-error" : "phoneNumber-hint"
                     }
-                    value={field.state.value}
+                    value={field.value}
                     onChange={(e) =>
-                      field.handleChange(formatPhone(e.target.value))
+                      field.onChange(formatPhone(e.target.value))
                     }
-                    onBlur={field.handleBlur}
+                    onBlur={field.onBlur}
                     disabled={isSubmitting}
                     className={inputClass(!!err)}
                   />
                 </FormField>
               );
             }}
-          </form.Field>
+          />
         </div>
 
         {/* DOB + License */}
         <div className="grid grid-cols-2 gap-4">
-          <form.Field
+          <Controller
             name="dob"
-            validators={fieldValidate<string>((value) => {
-              const r = identitySchema.shape.dob.safeParse(value);
-              return r.success ? undefined : r.error.issues[0].message;
-            })}
-          >
-            {(field) => {
-              const err = field.state.meta.errors[0] ?? apiFieldErrors["dob"];
+            control={control}
+            render={({ field }) => {
+              const err =
+                (errors.dob?.message as string | undefined) ??
+                apiFieldErrors["dob"];
               return (
                 <FormField label="Date of Birth" id="dob" required error={err}>
                   <input
@@ -438,29 +412,24 @@ export function IdentityForm() {
                     aria-required="true"
                     aria-invalid={!!err}
                     aria-describedby={err ? "dob-error" : undefined}
-                    value={field.state.value}
-                    onChange={(e) => field.handleChange(e.target.value)}
-                    onBlur={field.handleBlur}
+                    value={field.value}
+                    onChange={(e) => field.onChange(e.target.value)}
+                    onBlur={field.onBlur}
                     disabled={isSubmitting}
                     className={inputClass(!!err)}
                   />
                 </FormField>
               );
             }}
-          </form.Field>
+          />
 
-          <form.Field
+          <Controller
             name="driversLicense"
-            validators={fieldValidate<string>((value) => {
-              const r = identitySchema.shape.driversLicense.safeParse(
-                sanitize(value).trim(),
-              );
-              return r.success ? undefined : r.error.issues[0].message;
-            })}
-          >
-            {(field) => {
+            control={control}
+            render={({ field }) => {
               const err =
-                field.state.meta.errors[0] ?? apiFieldErrors["driversLicense"];
+                (errors.driversLicense?.message as string | undefined) ??
+                apiFieldErrors["driversLicense"];
               return (
                 <FormField
                   label="Driver's License Number"
@@ -476,32 +445,28 @@ export function IdentityForm() {
                     aria-required="true"
                     aria-invalid={!!err}
                     aria-describedby={err ? "driversLicense-error" : undefined}
-                    value={field.state.value}
+                    value={field.value}
                     onChange={(e) =>
-                      field.handleChange(
+                      field.onChange(
                         sanitizeInput(e.target.value.toUpperCase()),
                       )
                     }
-                    onBlur={field.handleBlur}
+                    onBlur={field.onBlur}
                     disabled={isSubmitting}
                     className={inputClass(!!err)}
                   />
                 </FormField>
               );
             }}
-          </form.Field>
+          />
         </div>
 
         {/* Consent */}
-        <form.Field
+        <Controller
           name="consent"
-          validators={fieldValidate<boolean>((value) => {
-            if (!value)
-              return "You must consent to data processing to continue.";
-          })}
-        >
-          {(field) => {
-            const err = field.state.meta.errors[0] as string | undefined;
+          control={control}
+          render={({ field }) => {
+            const err = errors.consent?.message as string | undefined;
             return (
               <div className="space-y-1">
                 <div className="flex items-start gap-3">
@@ -511,11 +476,11 @@ export function IdentityForm() {
                     aria-required="true"
                     aria-invalid={!!err}
                     aria-describedby={err ? "consent-error" : undefined}
-                    checked={field.state.value as unknown as boolean}
+                    checked={field.value as unknown as boolean}
                     onChange={(e) =>
-                      field.handleChange(e.target.checked as unknown as true)
+                      field.onChange(e.target.checked as unknown as true)
                     }
-                    onBlur={field.handleBlur}
+                    onBlur={field.onBlur}
                     disabled={isSubmitting}
                     className="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 disabled:cursor-not-allowed"
                   />
@@ -539,14 +504,14 @@ export function IdentityForm() {
               </div>
             );
           }}
-        </form.Field>
+        />
 
         {/* Actions */}
         <div className="flex items-center justify-between border-t border-gray-100 pt-6">
           <button
             type="button"
             onClick={() => {
-              form.reset();
+              reset(DEFAULTS);
               mutation.reset();
             }}
             disabled={isSubmitting}
